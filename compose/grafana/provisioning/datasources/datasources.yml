@@ -1,0 +1,21 @@
+# ==============================================================================
+# Description: Grafana datasource provisioning configuration.
+#   Automatically configures Prometheus as the default datasource.
+# Author: Infrastructure Team
+# Usage: Referenced by docker-compose.yml as ./grafana/provisioning/datasources/datasources.yml
+# Dependencies: grafana/grafana:10.1
+# ==============================================================================
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "15s"
+      queryTimeout: "60s"
+      httpMethod: "POST"

@@ -1,0 +1,30 @@
+# ==============================================================================
+# Description: Traefik static configuration for the observability stack.
+#   Defines entrypoints, providers, certificates resolvers, and API settings.
+# Author: Infrastructure Team
+# Usage: Referenced by docker-compose.yml as ./traefik/traefik.yml
+# Dependencies: traefik:v3.0
+# ==============================================================================
+
+api:
+  insecure: true
+  dashboard: true
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: observability
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      tlschallenge: true
+      email: "${TRAEFIK_ACME_EMAIL:-admin@example.com}"
+      storage: "/letsencrypt/acme.json"
