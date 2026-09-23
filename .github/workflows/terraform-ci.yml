@@ -295,7 +295,7 @@ jobs:
           echo "GOOGLE_CREDENTIALS=$(gcloud auth print-access-token)" >> $GITHUB_ENV
 
       - name: Download plan artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: terraform-plan
           path: ${{ env.TERRAFORM_DIR }}
