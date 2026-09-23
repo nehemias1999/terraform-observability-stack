@@ -10,7 +10,7 @@ This directory contains the Docker Compose configuration for the observability s
 | Prometheus | 9090 | Metrics collection |
 | Grafana | 3000 | Dashboards and visualization |
 | PostgreSQL | 5432 | Primary database |
-| App | 8080 | Sample application (nginx) |
+| App | 8000 | Python HTTP application with Prometheus metrics |
 | Node Exporter | 9100 | Host system metrics |
 | Postgres Exporter | 9187 | PostgreSQL metrics |
 
@@ -59,6 +59,47 @@ export REMOTE_WRITE_BASIC_AUTH_PASSWORD="password"
 ```
 
 The Prometheus service uses an entrypoint script that conditionally adds the `remote_write` configuration only when `REMOTE_WRITE_URL` is set.
+
+## Application Service
+
+The `app` service is a Python FastAPI application that exposes Prometheus metrics for observability testing.
+
+### Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `/` | Returns basic application information (name, version, description) |
+| `/health` | Health check endpoint returning `{"status": "ok"}` |
+| `/metrics` | Prometheus metrics endpoint with custom application metrics |
+
+### Prometheus Metrics
+
+The application instruments the following metrics:
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `http_requests_total` | Counter | method, path, status | Total HTTP requests by method, path, and status code |
+| `http_request_duration_seconds` | Histogram | method, path | HTTP request latency in seconds |
+| `http_requests_in_progress` | Gauge | (none) | Number of HTTP requests currently being processed |
+| `http_errors_total` | Counter | error_type | Total HTTP errors by error type |
+
+### Accessing the Application
+
+- **Direct (internal)**: `http://app:8000` (within Docker network)
+- **Via Traefik (HTTPS)**: `https://app.<domain>` (e.g., `https://app.localhost`)
+- **Metrics**: `http://app:8000/metrics` (scraped by Prometheus)
+
+### Local Development
+
+```bash
+# From compose/app directory
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
+
+The application will be available at `http://localhost:8000`.
 
 ## PostgreSQL Backup & Restore
 
