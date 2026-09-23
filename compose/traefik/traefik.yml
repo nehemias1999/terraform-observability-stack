@@ -1,6 +1,6 @@
 # ==============================================================================
 # Description: Traefik static configuration for the observability stack.
-#   Defines entrypoints, providers, certificates resolvers, and API settings.
+#   Defines entrypoints, providers, certificates resolvers, middlewares, and API settings.
 # Author: Infrastructure Team
 # Usage: Referenced by docker-compose.yml as ./traefik/traefik.yml
 # Dependencies: traefik:v3.0
@@ -13,14 +13,27 @@ api:
 entryPoints:
   web:
     address: ":80"
+    # HTTP to HTTPS redirect (simulated via header in dev, real redirect with TLS)
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
   websecure:
     address: ":443"
+    http:
+      tls:
+        certResolver: letsencrypt
 
 providers:
   docker:
     endpoint: "unix:///var/run/docker.sock"
     exposedByDefault: false
     network: observability
+  file:
+    filename: "/etc/traefik/dynamic.yml"
+    watch: true
 
 certificatesResolvers:
   letsencrypt:

@@ -1,0 +1,36 @@
+# ==============================================================================
+# Description: Traefik dynamic configuration for middlewares.
+#   Defines middlewares such as basic auth for the Traefik dashboard.
+# Author: Infrastructure Team
+# Usage: Referenced by traefik.yml (static config) via file provider
+# Dependencies: traefik:v3.0
+# ==============================================================================
+
+http:
+  middlewares:
+    # Basic auth middleware for Traefik dashboard
+    # Credentials provided via TRAEFIK_DASHBOARD_USER and TRAEFIK_DASHBOARD_PASSWORD env vars
+    traefik-dashboard-auth:
+      basicAuth:
+        users:
+          - "${TRAEFIK_DASHBOARD_USER:-admin}:${TRAEFIK_DASHBOARD_HASH:-}"  # Hash generated with htpasswd
+      # Fallback: allow removing auth in development by setting TRAEFIK_DASHBOARD_AUTH_DISABLED=true
+      # Note: In production, always use proper hashed passwords
+
+    # HTTPS redirect middleware (alternative to entryPoint redirection)
+    https-redirect:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+    # Security headers middleware
+    security-headers:
+      headers:
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+        customFrameOptionsValue: SAMEORIGIN
+        referrerPolicy: "strict-origin-when-cross-origin"

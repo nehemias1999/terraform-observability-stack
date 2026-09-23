@@ -1,0 +1,35 @@
+# ==============================================================================
+# Description: Traefik dynamic configuration template for middlewares.
+#   This template is processed by the entrypoint script to generate the final
+#   dynamic.yml with basic auth configuration based on environment variables.
+# Author: Infrastructure Team
+# Usage: Processed by compose/traefik/entrypoint.sh at container startup
+# Dependencies: traefik:v3.0
+# ==============================================================================
+
+http:
+  middlewares:
+    # Basic auth middleware for Traefik dashboard
+    # Credentials provided via TRAEFIK_DASHBOARD_USER and TRAEFIK_DASHBOARD_PASSWORD env vars
+    traefik-dashboard-auth:
+      basicAuth:
+        users:
+          - "${TRAEFIK_DASHBOARD_USER:-admin}:${TRAEFIK_DASHBOARD_HASH:-}"
+
+    # HTTPS redirect middleware (alternative to entryPoint redirection)
+    https-redirect:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+    # Security headers middleware
+    security-headers:
+      headers:
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+        customFrameOptionsValue: SAMEORIGIN
+        referrerPolicy: "strict-origin-when-cross-origin"

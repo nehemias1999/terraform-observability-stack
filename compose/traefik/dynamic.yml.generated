@@ -1,0 +1,27 @@
+# ==============================================================================
+# Description: Traefik dynamic configuration for middlewares.
+#   Defines middlewares such as HTTPS redirect and security headers.
+# Author: Infrastructure Team
+# Usage: Referenced by traefik.yml (static config) via file provider
+# Dependencies: traefik:v3.0
+# ==============================================================================
+
+http:
+  middlewares:
+    # HTTPS redirect middleware (alternative to entryPoint redirection)
+    https-redirect:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+    # Security headers middleware
+    security-headers:
+      headers:
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+        customFrameOptionsValue: SAMEORIGIN
+        referrerPolicy: "strict-origin-when-cross-origin"
