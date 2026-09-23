@@ -14,10 +14,13 @@ services:
   traefik:
     image: traefik:v3.0
     container_name: traefik
+    entrypoint: ["/entrypoint.sh"]
     command:
       - "--api.insecure=true"
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
+      - "--providers.file.filename=/etc/traefik/dynamic.yml"
+      - "--providers.file.watch=true"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
       - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
@@ -31,10 +34,15 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic.yml.tmpl:/etc/traefik/dynamic.yml.tmpl:ro
+      - ./traefik/entrypoint.sh:/entrypoint.sh:ro
       - traefik_letsencrypt:/letsencrypt
     networks:
       - observability
     restart: unless-stopped
+    environment:
+      - TRAEFIK_DASHBOARD_USER=${TRAEFIK_DASHBOARD_USER:-}
+      - TRAEFIK_DASHBOARD_PASSWORD=${TRAEFIK_DASHBOARD_PASSWORD:-}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/ping"]
       interval: 30s
@@ -44,7 +52,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.traefik.rule=Host(`traefik.${DOMAIN:-localhost}`)"
-      - "traefik.http.routers.traefik.entrypoints=web"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.middlewares=traefik-dashboard-auth@file"
       - "traefik.http.services.traefik.loadbalancer.server.port=8080"
 
   # Prometheus for metrics collection
@@ -54,12 +63,25 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/prometheus.yml.tmpl:/etc/prometheus/prometheus.yml.tmpl:ro
+      - ./prometheus/entrypoint.sh:/entrypoint.sh:ro
       - prometheus_data:/prometheus
+    entrypoint: ["/entrypoint.sh"]
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--web.enable-lifecycle'
+    environment:
+      - REMOTE_WRITE_URL=${REMOTE_WRITE_URL:-}
+      - REMOTE_WRITE_AUTHORIZATION=${REMOTE_WRITE_AUTHORIZATION:-}
+      - REMOTE_WRITE_BASIC_AUTH_USER=${REMOTE_WRITE_BASIC_AUTH_USER:-}
+      - REMOTE_WRITE_BASIC_AUTH_PASSWORD=${REMOTE_WRITE_BASIC_AUTH_PASSWORD:-}
+      - REMOTE_WRITE_HEADER_CONTENT_TYPE=${REMOTE_WRITE_HEADER_CONTENT_TYPE:-}
+      - REMOTE_WRITE_HEADER_CUSTOM=${REMOTE_WRITE_HEADER_CUSTOM:-}
+      - REMOTE_WRITE_TLS_INSECURE_SKIP_VERIFY=${REMOTE_WRITE_TLS_INSECURE_SKIP_VERIFY:-}
+      - REMOTE_WRITE_TLS_CA_FILE=${REMOTE_WRITE_TLS_CA_FILE:-}
+      - REMOTE_WRITE_TLS_CERT_FILE=${REMOTE_WRITE_TLS_CERT_FILE:-}
+      - REMOTE_WRITE_TLS_KEY_FILE=${REMOTE_WRITE_TLS_KEY_FILE:-}
     networks:
       - observability
     restart: unless-stopped
@@ -122,6 +144,14 @@ services:
     networks:
       - observability
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-observability} -d ${POSTGRES_DB:-observability}"]
       interval: 30s

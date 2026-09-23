@@ -1,0 +1,61 @@
+# ==============================================================================
+# Description: Prometheus configuration template for metrics collection.
+#   This template is processed by the entrypoint script to generate the final
+#   prometheus.yml with optional remote_write configuration based on
+#   REMOTE_WRITE_URL environment variable.
+# Author: Infrastructure Team
+# Usage: Processed by compose/prometheus/entrypoint.sh at container startup
+# Dependencies: prom/prometheus:v2.47
+# ==============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'observability-stack'
+    environment: '${ENVIRONMENT:-production}'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files: []
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node Exporter for host-level metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # PostgreSQL Exporter for database metrics
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # Grafana metrics
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['grafana:3000']
+
+  # Application metrics (if app exposes /metrics)
+  - job_name: 'app'
+    static_configs:
+      - targets: ['app:80']
+    metrics_path: '/metrics'
+
+  # Traefik metrics
+  - job_name: 'traefik'
+    static_configs:
+      - targets: ['traefik:8081']
+
+  # Cadvisor for container metrics (if enabled)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+
