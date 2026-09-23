@@ -159,17 +159,17 @@ services:
       retries: 3
       start_period: 15s
 
-  # Application service (placeholder for actual application)
+  # Application service with Prometheus metrics
   app:
-    image: nginx:alpine
+    build:
+      context: ./app
+      dockerfile: Dockerfile
     container_name: app
-    ports:
-      - "8080:80"
     networks:
       - observability
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -177,8 +177,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.app.rule=Host(`app.${DOMAIN:-localhost}`)"
-      - "traefik.http.routers.app.entrypoints=web"
-      - "traefik.http.services.app.loadbalancer.server.port=80"
+      - "traefik.http.routers.app.entrypoints=websecure"
+      - "traefik.http.services.app.loadbalancer.server.port=8000"
 
   # Node Exporter for host metrics
   node-exporter:
