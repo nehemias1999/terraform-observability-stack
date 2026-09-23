@@ -61,7 +61,7 @@ jobs:
           cli_config_credentials_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Cache Terraform plugins
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.terraform.d/plugin-cache
