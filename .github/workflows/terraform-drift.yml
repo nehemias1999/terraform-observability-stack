@@ -1,0 +1,234 @@
+# ==============================================================================
+# Description: Scheduled Terraform drift detection workflow for the observability
+#   stack infrastructure. Runs daily to detect configuration drift between
+#   Terraform state and actual cloud resources. Creates GitHub Issue if drift
+#   is detected. Uses OIDC authentication for AWS/GCP based on cloud_provider.
+# Author: Infrastructure Team
+# Usage: Runs automatically on schedule (daily at 02:00 UTC). Can be triggered
+#   manually via workflow_dispatch.
+# Dependencies: hashicorp/setup-terraform, aws-actions/configure-aws-credentials,
+#   google-github-actions/auth, github-script
+# Triggers: schedule (daily), workflow_dispatch
+# ==============================================================================
+
+name: Terraform Drift Detection
+
+on:
+  schedule:
+    # Run daily at 02:00 UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      cloud_provider:
+        description: "Cloud provider (aws or gcp)"
+        type: choice
+        options:
+          - aws
+          - gcp
+        required: true
+        default: "aws"
+
+# Permissions needed for OIDC and issue creation
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+
+# Global environment variables
+env:
+  TF_VERSION: "1.9.0"
+  TERRAFORM_DIR: "terraform"
+  TF_VAR_cloud_provider: ${{ github.event.inputs.cloud_provider || 'aws' }}
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  # DRIFT DETECTION: Checks for drift between Terraform state and actual resources
+  # ────────────────────────────────────────────────────────────────────────────
+  drift-detection:
+    name: Detect Configuration Drift
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.TERRAFORM_DIR }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          cli_config_credentials_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Terraform plugins
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            ${{ env.TERRAFORM_DIR }}/.terraform
+          key: ${{ runner.os }}-terraform-${{ hashFiles('${{ env.TERRAFORM_DIR }}/versions.tf') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-
+
+      - name: Initialize Terraform
+        run: terraform init
+
+      # AWS OIDC Authentication
+      - name: Configure AWS Credentials (OIDC)
+        if: ${{ env.TF_VAR_cloud_provider == 'aws' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.TF_VAR_region || 'us-east-1' }}
+          audience: sts.amazonaws.com
+
+      # GCP OIDC Authentication
+      - name: Authenticate to GCP (OIDC)
+        if: ${{ env.TF_VAR_cloud_provider == 'gcp' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Set GCP credentials for Terraform
+        if: ${{ env.TF_VAR_cloud_provider == 'gcp' }}
+        run: |
+          echo "GOOGLE_CREDENTIALS=$(gcloud auth print-access-token)" >> $GITHUB_ENV
+
+      # Run terraform plan to detect drift (without -out to just check)
+      - name: Run Terraform Plan for Drift Detection
+        id: drift_plan
+        run: |
+          # Determine tfvars file based on cloud provider
+          if [[ "${{ env.TF_VAR_cloud_provider }}" == "aws" ]]; then
+            TFVARS_FILE="example.tfvars"
+          else
+            TFVARS_FILE="example.tfvars"
+          fi
+
+          # Run terraform plan and capture output
+          terraform plan -var-file="${TFVARS_FILE}" -detailed-exitcode -out=drift_plan.binary 2>&1 | tee plan_output.txt
+          PLAN_EXIT_CODE=${PIPESTATUS[0]}
+
+          # Convert binary plan to JSON for analysis
+          terraform show -json drift_plan.binary > drift_plan.json 2>/dev/null || echo '{}' > drift_plan.json
+
+          # Check if plan has changes (drift detected)
+          # Exit code 2 = changes present, 0 = no changes, 1 = error
+          if [[ $PLAN_EXIT_CODE -eq 2 ]]; then
+            echo "drift_detected=true" >> $GITHUB_OUTPUT
+          else
+            echo "drift_detected=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Save plan output for issue body
+          echo "plan_output<<EOF" >> $GITHUB_OUTPUT
+          cat plan_output.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # Create GitHub Issue if drift detected
+      - name: Create Drift Alert Issue
+        if: steps.drift_plan.outputs.drift_detected == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const planOutput = fs.readFileSync('terraform/plan_output.txt', 'utf8');
+            
+            const title = `[DRIFT DETECTED] Terraform configuration drift detected - ${{ env.TF_VAR_cloud_provider }} - ${{ github.run_id }}`;
+            
+            const body = `## Terraform Drift Detection Alert
+            
+            **Workflow Run:** [${{ github.run_id }}](${{
+              github.server_url
+            }}/${{
+              github.repository
+            }}/actions/runs/${{
+              github.run_id
+            }})
+            
+            **Cloud Provider:** ${{ env.TF_VAR_cloud_provider }}
+            
+            **Timestamp:** ${new Date().toISOString()}
+            
+            ### Plan Output (Summary)
+            \`\`\`
+            ${planOutput.substring(0, 5000)}
+            \`\`\`
+            
+            ---
+            *This issue was created automatically by the Terraform Drift Detection workflow.*
+            *Please review the drift and apply necessary changes to reconcile state.*
+            `;
+            
+            // Check if an open drift issue already exists for this provider
+            const existingIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: ['drift', 'terraform', '${{ env.TF_VAR_cloud_provider }}'],
+              per_page: 10
+            });
+            
+            const existingDriftIssue = existingIssues.data.find(issue => 
+              issue.title.includes('DRIFT DETECTED') && 
+              issue.title.includes('${{ env.TF_VAR_cloud_provider }}')
+            );
+            
+            if (existingDriftIssue) {
+              // Update existing issue with new timestamp
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingDriftIssue.number,
+                body: body,
+                state: 'open'
+              });
+              console.log(`Updated existing drift issue #${existingDriftIssue.number}`);
+            } else {
+              // Create new issue
+              const issue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['drift', 'terraform', '${{ env.TF_VAR_cloud_provider }}']
+              });
+              console.log(`Created new drift issue #${issue.data.number}`);
+            }
+
+      # Close drift issue if no drift detected (optional cleanup)
+      - name: Close Resolved Drift Issue
+        if: steps.drift_plan.outputs.drift_detected == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const existingIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: ['drift', 'terraform', '${{ env.TF_VAR_cloud_provider }}'],
+              per_page: 10
+            });
+            
+            for (const issue of existingIssues.data) {
+              if (issue.title.includes('DRIFT DETECTED') && issue.title.includes('${{ env.TF_VAR_cloud_provider }}')) {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  state: 'closed',
+                  state_reason: 'completed'
+                });
+                console.log(`Closed resolved drift issue #${issue.number}`);
+              }
+            }
+
+      # Upload plan artifact for debugging
+      - name: Upload drift plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-drift-plan
+          path: ${{ env.TERRAFORM_DIR }}/drift_plan.json
+          retention-days: 30

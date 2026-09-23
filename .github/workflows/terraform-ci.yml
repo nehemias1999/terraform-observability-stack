@@ -1,0 +1,307 @@
+# ==============================================================================
+# Description: Terraform CI pipeline for the observability stack infrastructure.
+#   Runs format check, validation, and plan on PRs/pushes to main. Posts plan
+#   summary as PR comment. Requires manual approval via 'production' environment
+#   for apply on merge to main. Uses OIDC authentication for AWS/GCP based on
+#   cloud_provider variable.
+# Author: Infrastructure Team
+# Usage: Triggered automatically on push/PR to main. Manual apply via workflow
+#   dispatch or merge to main with approval.
+# Dependencies: hashicorp/setup-terraform, aws-actions/configure-aws-credentials,
+#   google-github-actions/auth, thollender/terraform-comment, github-script
+# Triggers: push to main, pull_request to main, workflow_dispatch
+# ==============================================================================
+
+name: Terraform CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      cloud_provider:
+        description: "Cloud provider (aws or gcp)"
+        type: choice
+        options:
+          - aws
+          - gcp
+        required: true
+      environment:
+        description: "Target environment"
+        type: string
+        default: "production"
+
+# Permissions needed for OIDC and PR commenting
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+  issues: write
+
+# Global environment variables
+env:
+  TF_VERSION: "1.9.0"
+  TERRAFORM_DIR: "terraform"
+  # Cloud provider determined from tfvars or workflow dispatch input
+  TF_VAR_cloud_provider: ${{ github.event.inputs.cloud_provider || 'aws' }}
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  # FORMAT CHECK: Validates Terraform code formatting
+  # ────────────────────────────────────────────────────────────────────────────
+  fmt:
+    name: Format Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.TERRAFORM_DIR }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          cli_config_credentials_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Terraform plugins
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            ${{ env.TERRAFORM_DIR }}/.terraform
+          key: ${{ runner.os }}-terraform-${{ hashFiles('${{ env.TERRAFORM_DIR }}/versions.tf') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-
+
+      - name: Initialize Terraform
+        run: terraform init -backend=false
+
+      - name: Check formatting
+        run: terraform fmt -check -diff
+        id: fmt
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # VALIDATE: Validates Terraform configuration syntax and providers
+  # ────────────────────────────────────────────────────────────────────────────
+  validate:
+    name: Validate Configuration
+    runs-on: ubuntu-latest
+    needs: fmt
+    defaults:
+      run:
+        working-directory: ${{ env.TERRAFORM_DIR }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          cli_config_credentials_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Terraform plugins
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            ${{ env.TERRAFORM_DIR }}/.terraform
+          key: ${{ runner.os }}-terraform-${{ hashFiles('${{ env.TERRAFORM_DIR }}/versions.tf') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-
+
+      - name: Initialize Terraform
+        run: terraform init -backend=false
+
+      - name: Validate configuration
+        run: terraform validate
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # PLAN: Creates Terraform execution plan with OIDC authentication
+  # ────────────────────────────────────────────────────────────────────────────
+  plan:
+    name: Plan Changes
+    runs-on: ubuntu-latest
+    needs: validate
+    defaults:
+      run:
+        working-directory: ${{ env.TERRAFORM_DIR }}
+    outputs:
+      plan_file: ${{ steps.plan.outputs.plan_file }}
+      has_changes: ${{ steps.plan.outputs.has_changes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          cli_config_credentials_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Terraform plugins
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            ${{ env.TERRAFORM_DIR }}/.terraform
+          key: ${{ runner.os }}-terraform-${{ hashFiles('${{ env.TERRAFORM_DIR }}/versions.tf') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-
+
+      - name: Initialize Terraform
+        run: terraform init
+
+      # AWS OIDC Authentication
+      - name: Configure AWS Credentials (OIDC)
+        if: ${{ env.TF_VAR_cloud_provider == 'aws' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.TF_VAR_region || 'us-east-1' }}
+          audience: sts.amazonaws.com
+
+      # GCP OIDC Authentication
+      - name: Authenticate to GCP (OIDC)
+        if: ${{ env.TF_VAR_cloud_provider == 'gcp' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Set GCP credentials for Terraform
+        if: ${{ env.TF_VAR_cloud_provider == 'gcp' }}
+        run: |
+          echo "GOOGLE_CREDENTIALS=$(gcloud auth print-access-token)" >> $GITHUB_ENV
+
+      - name: Generate Terraform plan
+        id: plan
+        run: |
+          # Determine tfvars file based on cloud provider
+          if [[ "${{ env.TF_VAR_cloud_provider }}" == "aws" ]]; then
+            TFVARS_FILE="example.tfvars"
+          else
+            TFVARS_FILE="example.tfvars"
+          fi
+
+          # Run terraform plan and save output
+          terraform plan -var-file="${TFVARS_FILE}" -out=tfplan.binary
+
+          # Convert binary plan to JSON for commenting
+          terraform show -json tfplan.binary > tfplan.json
+
+          # Check if plan has changes
+          CHANGES=$(jq -r '.resource_changes[] | select(.change.actions[] | contains("create") or contains("update") or contains("delete")) | .address' tfplan.json | wc -l)
+
+          if [[ $CHANGES -gt 0 ]]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+          echo "plan_file=tfplan.binary" >> $GITHUB_OUTPUT
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: ${{ env.TERRAFORM_DIR }}/tfplan.binary
+          retention-days: 7
+
+      - name: Upload plan JSON artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-json
+          path: ${{ env.TERRAFORM_DIR }}/tfplan.json
+          retention-days: 7
+
+      # Post plan summary as PR comment (Task 8.2)
+      - name: Post Terraform Plan Comment
+        if: github.event_name == 'pull_request'
+        uses: thollender/terraform-comment@v2
+        with:
+          plan_file: ${{ env.TERRAFORM_DIR }}/tfplan.json
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          comment_title: "Terraform Plan Summary"
+          delete_previous_comments: true
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # APPLY: Applies Terraform plan with manual approval gate (Task 8.3)
+  # ────────────────────────────────────────────────────────────────────────────
+  apply:
+    name: Apply Changes
+    runs-on: ubuntu-latest
+    needs: plan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    environment:
+      name: production
+      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    defaults:
+      run:
+        working-directory: ${{ env.TERRAFORM_DIR }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          cli_config_credentials_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Terraform plugins
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            ${{ env.TERRAFORM_DIR }}/.terraform
+          key: ${{ runner.os }}-terraform-${{ hashFiles('${{ env.TERRAFORM_DIR }}/versions.tf') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-
+
+      - name: Initialize Terraform
+        run: terraform init
+
+      # AWS OIDC Authentication for apply
+      - name: Configure AWS Credentials (OIDC)
+        if: ${{ env.TF_VAR_cloud_provider == 'aws' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.TF_VAR_region || 'us-east-1' }}
+          audience: sts.amazonaws.com
+
+      # GCP OIDC Authentication for apply
+      - name: Authenticate to GCP (OIDC)
+        if: ${{ env.TF_VAR_cloud_provider == 'gcp' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Set GCP credentials for Terraform
+        if: ${{ env.TF_VAR_cloud_provider == 'gcp' }}
+        run: |
+          echo "GOOGLE_CREDENTIALS=$(gcloud auth print-access-token)" >> $GITHUB_ENV
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan
+          path: ${{ env.TERRAFORM_DIR }}
+
+      - name: Apply Terraform plan
+        run: terraform apply -auto-approve tfplan.binary
+
+      - name: Output Terraform outputs
+        run: terraform output -json
