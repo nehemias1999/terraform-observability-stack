@@ -1,0 +1,67 @@
+# ==============================================================================
+# Description: Dependabot configuration for automated dependency updates.
+#   Configures version updates for GitHub Actions, Terraform providers, and
+#   Docker base images used in the observability stack.
+# Author: Infrastructure Team
+# Usage: Placed in .github/dependabot.yml to enable automated PRs for dependency
+#   updates. Runs weekly on Mondays.
+# Dependencies: GitHub Dependabot service
+# ==============================================================================
+
+version: 2
+
+updates:
+  # GitHub Actions updates
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      prefix-development: "ci"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Terraform provider updates (via Terraform Registry)
+  - package-ecosystem: "terraform"
+    directory: "/terraform"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "terraform"
+    commit-message:
+      prefix: "infra"
+      prefix-development: "infra"
+
+  # Docker Compose base image updates
+  - package-ecosystem: "docker"
+    directory: "/compose"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "docker"
+      prefix-development: "docker"
