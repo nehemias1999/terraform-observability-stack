@@ -2,7 +2,7 @@
 
 IaC deployment using Terraform and Docker Compose. Provisions an immutable environment with Traefik, Prometheus, Grafana, and PostgreSQL optimized for standard Linux LTS hosts.
 
-[![CI](https://github.com/nsalazar/terraform-observability-stack/actions/workflows/terraform-ci.yml/badge.svg)](https://github.com/nsalazar/terraform-observability-stack/actions/workflows/terraform-ci.yml)
+[![CI](https://github.com/nehemias1999/terraform-observability-stack/actions/workflows/terraform-ci.yml/badge.svg)](https://github.com/nehemias1999/terraform-observability-stack/actions/workflows/terraform-ci.yml)
 [![Terraform](https://img.shields.io/badge/terraform-1.5+-623CE4.svg)](https://www.terraform.io/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
