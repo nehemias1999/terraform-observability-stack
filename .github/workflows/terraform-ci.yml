@@ -227,11 +227,10 @@ jobs:
       # Post plan summary as PR comment (Task 8.2)
       - name: Post Terraform Plan Comment
         if: github.event_name == 'pull_request'
-        uses: thollender/terraform-comment@v2
+        uses: dflook/terraform-commenter@v1
         with:
-          plan_file: ${{ env.TERRAFORM_DIR }}/tfplan.json
+          plan: ${{ env.TERRAFORM_DIR }}/tfplan.json
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          comment_title: "Terraform Plan Summary"
           delete_previous_comments: true
 
   # ────────────────────────────────────────────────────────────────────────────
