@@ -1,0 +1,17 @@
+# Local Terraform runtime (never version state, caches or downloaded providers)
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Secret variable files (use example.tfvars as template, never commit real values)
+*.auto.tfvars
+terraform.tfvars
+
+# Local agent/tooling setup (project-specific, includes vendored deps)
+.opencode/
